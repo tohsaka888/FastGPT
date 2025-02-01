@@ -72,6 +72,7 @@ import { dispatchLoopEnd } from './loop/runLoopEnd';
 import { dispatchLoopStart } from './loop/runLoopStart';
 import { dispatchFormInput } from './interactive/formInput';
 import { dispatchToolParams } from './agent/runTool/toolParams';
+import { getErrText } from '@fastgpt/global/common/error/utils';
 
 const callbackMap: Record<FlowNodeTypeEnum, Function> = {
   [FlowNodeTypeEnum.workflowStart]: dispatchWorkflowStart,
@@ -231,9 +232,7 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
 
     if (toolResponses !== undefined) {
       if (Array.isArray(toolResponses) && toolResponses.length === 0) return;
-      if (typeof toolResponses === 'object' && Object.keys(toolResponses).length === 0) {
-        return;
-      }
+      if (typeof toolResponses === 'object' && Object.keys(toolResponses).length === 0) return;
       toolRunResponse = toolResponses;
     }
 
@@ -488,16 +487,16 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
       if (input.key === dynamicInput?.key) return;
 
       // Skip some special key
-      if (input.key === NodeInputKeyEnum.childrenNodeIdList) {
+      if (
+        [NodeInputKeyEnum.childrenNodeIdList, NodeInputKeyEnum.httpJsonBody].includes(
+          input.key as any
+        )
+      ) {
         params[input.key] = input.value;
-
         return;
       }
 
-      // replace {{xx}} variables
-      // let value = replaceVariable(input.value, variables);
-
-      // replace {{$xx.xx$}} variables
+      // replace {{$xx.xx$}} and {{xx}} variables
       let value = replaceEditorVariable({
         text: input.value,
         nodes: runtimeNodes,
@@ -565,6 +564,8 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
           const targetEdges = runtimeEdges.filter((item) => item.source === node.nodeId);
           const skipHandleIds = targetEdges.map((item) => item.sourceHandle);
 
+          toolRunResponse = getErrText(error);
+
           // Skip all edges and return error
           return {
             [DispatchNodeResponseKeyEnum.nodeResponse]: {
@@ -603,6 +604,11 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
         ...variables,
         ...dispatchRes[DispatchNodeResponseKeyEnum.newVariables]
       };
+    }
+
+    // Error
+    if (dispatchRes?.responseData?.error) {
+      addLog.warn('workflow error', dispatchRes.responseData.error);
     }
 
     return {

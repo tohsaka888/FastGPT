@@ -9,9 +9,9 @@ weight: 707
 
 由于环境变量不利于配置复杂的内容，新版 FastGPT 采用了 ConfigMap 的形式挂载配置文件，你可以在 `projects/app/data/config.json` 看到默认的配置文件。可以参考 [docker-compose 快速部署](/docs/development/docker/) 来挂载配置文件。
 
-**开发环境下**，你需要将示例配置文件 `config.json` 复制成 `config.local.json` 文件才会生效。
+**开发环境下**，你需要将示例配置文件 `config.json` 复制成 `config.local.json` 文件才会生效。  
 
-这个配置文件中包含了系统参数和各个模型配置：
+下面配置文件示例中包含了系统参数和各个模型配置：
 
 ## 4.6.8+ 版本新配置文件示例
 
@@ -203,7 +203,9 @@ weight: 707
 - OpenAI
 - Claude
 - Gemini
+- Meta
 - MistralAI
+- AliCloud - 阿里云
 - Qwen - 通义千问
 - Doubao - 豆包
 - ChatGLM - 智谱
@@ -215,7 +217,12 @@ weight: 707
 - Baichuan - 百川
 - Yi - 零一万物
 - Ernie - 文心一言
+- StepFun - 阶跃星辰
 - Ollama
+- BAAI - 智源研究院
+- FishAudio
+- Intern - 书生
+- Moka - Moka-AI
 - Other - 其他
 
 
