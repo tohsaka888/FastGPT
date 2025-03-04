@@ -1,5 +1,5 @@
 import { createChatCompletion } from '../../../../ai/config';
-import { filterGPTMessageByMaxTokens, loadRequestMessages } from '../../../../chat/utils';
+import { filterGPTMessageByMaxContext, loadRequestMessages } from '../../../../chat/utils';
 import {
   ChatCompletion,
   ChatCompletionMessageToolCall,
@@ -27,9 +27,10 @@ import { getNanoid, sliceStrStartEnd } from '@fastgpt/global/common/string/tools
 import { toolValueTypeList } from '@fastgpt/global/core/workflow/constants';
 import { WorkflowInteractiveResponseType } from '@fastgpt/global/core/workflow/template/system/interactive/type';
 import { ChatItemValueTypeEnum } from '@fastgpt/global/core/chat/constants';
+import { getErrText } from '@fastgpt/global/common/error/utils';
 
 type ToolRunResponseType = {
-  toolRunResponse: DispatchFlowResponse;
+  toolRunResponse?: DispatchFlowResponse;
   toolMsgParams: ChatCompletionToolMessageParam;
 }[];
 
@@ -92,7 +93,15 @@ export const runToolWithToolChoice = async (
     stream,
     externalProvider,
     workflowStreamResponse,
-    params: { temperature, maxToken, aiChatVision }
+    params: {
+      temperature,
+      maxToken,
+      aiChatVision,
+      aiChatTopP,
+      aiChatStopSign,
+      aiChatResponseFormat,
+      aiChatJsonSchema
+    }
   } = workflowProps;
 
   if (maxRunToolTimes <= 0 && response) {
@@ -209,7 +218,7 @@ export const runToolWithToolChoice = async (
       properties[item.key] = {
         ...jsonSchema,
         description: item.toolDescription || '',
-        enum: item.enum?.split('\n').filter(Boolean) || []
+        enum: item.enum?.split('\n').filter(Boolean) || undefined
       };
     });
 
@@ -226,11 +235,17 @@ export const runToolWithToolChoice = async (
       }
     };
   });
+
+  const max_tokens = computedMaxToken({
+    model: toolModel,
+    maxToken
+  });
+
   // Filter histories by maxToken
   const filterMessages = (
-    await filterGPTMessageByMaxTokens({
+    await filterGPTMessageByMaxContext({
       messages,
-      maxTokens: toolModel.maxContext - 300 // filter token. not response maxToken
+      maxContext: toolModel.maxContext - (max_tokens || 0) // filter token. not response maxToken
     })
   ).map((item) => {
     if (item.role === 'assistant' && item.tool_calls) {
@@ -246,31 +261,30 @@ export const runToolWithToolChoice = async (
     return item;
   });
 
-  const [requestMessages, max_tokens] = await Promise.all([
+  const [requestMessages] = await Promise.all([
     loadRequestMessages({
       messages: filterMessages,
       useVision: toolModel.vision && aiChatVision,
       origin: requestOrigin
-    }),
-    computedMaxToken({
-      model: toolModel,
-      maxToken,
-      filterMessages
     })
   ]);
   const requestBody = llmCompletionsBodyFormat(
     {
       model: toolModel.model,
-      temperature,
-      max_tokens,
       stream,
       messages: requestMessages,
       tools,
-      tool_choice: 'auto'
+      tool_choice: 'auto',
+      temperature,
+      max_tokens,
+      top_p: aiChatTopP,
+      stop: aiChatStopSign,
+      response_format: aiChatResponseFormat,
+      json_schema: aiChatJsonSchema
     },
     toolModel
   );
-  // console.log(JSON.stringify(requestBody, null, 2), '==requestBody');
+  // console.log(JSON.stringify(requestMessages, null, 2), '==requestBody');
   /* Run llm */
   const {
     response: aiResponse,
@@ -344,59 +358,87 @@ export const runToolWithToolChoice = async (
     return Promise.reject(getEmptyResponseTip());
   }
 
-  // Run the selected tool by LLM.
-  const toolsRunResponse = (
-    await Promise.all(
-      toolCalls.map(async (tool) => {
-        const toolNode = toolNodes.find((item) => item.nodeId === tool.function?.name);
+  /* Run the selected tool by LLM.
+    Since only reference parameters are passed, if the same tool is run in parallel, it will get the same run parameters
+  */
+  const toolsRunResponse: ToolRunResponseType = [];
+  for await (const tool of toolCalls) {
+    try {
+      const toolNode = toolNodes.find((item) => item.nodeId === tool.function?.name);
 
-        if (!toolNode) return;
+      if (!toolNode) continue;
 
-        const startParams = (() => {
-          try {
-            return json5.parse(tool.function.arguments);
-          } catch (error) {
-            return {};
+      const startParams = (() => {
+        try {
+          return json5.parse(tool.function.arguments);
+        } catch (error) {
+          return {};
+        }
+      })();
+
+      initToolNodes(runtimeNodes, [toolNode.nodeId], startParams);
+      const toolRunResponse = await dispatchWorkFlow({
+        ...workflowProps,
+        isToolCall: true
+      });
+
+      const stringToolResponse = formatToolResponse(toolRunResponse.toolResponses);
+
+      const toolMsgParams: ChatCompletionToolMessageParam = {
+        tool_call_id: tool.id,
+        role: ChatCompletionRequestMessageRoleEnum.Tool,
+        name: tool.function.name,
+        content: stringToolResponse
+      };
+
+      workflowStreamResponse?.({
+        event: SseResponseEventEnum.toolResponse,
+        data: {
+          tool: {
+            id: tool.id,
+            toolName: '',
+            toolAvatar: '',
+            params: '',
+            response: sliceStrStartEnd(stringToolResponse, 5000, 5000)
           }
-        })();
+        }
+      });
 
-        initToolNodes(runtimeNodes, [toolNode.nodeId], startParams);
-        const toolRunResponse = await dispatchWorkFlow({
-          ...workflowProps,
-          isToolCall: true
-        });
+      toolsRunResponse.push({
+        toolRunResponse,
+        toolMsgParams
+      });
+    } catch (error) {
+      const err = getErrText(error);
+      workflowStreamResponse?.({
+        event: SseResponseEventEnum.toolResponse,
+        data: {
+          tool: {
+            id: tool.id,
+            toolName: '',
+            toolAvatar: '',
+            params: '',
+            response: sliceStrStartEnd(err, 5000, 5000)
+          }
+        }
+      });
 
-        const stringToolResponse = formatToolResponse(toolRunResponse.toolResponses);
-
-        const toolMsgParams: ChatCompletionToolMessageParam = {
+      toolsRunResponse.push({
+        toolRunResponse: undefined,
+        toolMsgParams: {
           tool_call_id: tool.id,
           role: ChatCompletionRequestMessageRoleEnum.Tool,
           name: tool.function.name,
-          content: stringToolResponse
-        };
+          content: sliceStrStartEnd(err, 5000, 5000)
+        }
+      });
+    }
+  }
 
-        workflowStreamResponse?.({
-          event: SseResponseEventEnum.toolResponse,
-          data: {
-            tool: {
-              id: tool.id,
-              toolName: '',
-              toolAvatar: '',
-              params: '',
-              response: sliceStrStartEnd(stringToolResponse, 5000, 5000)
-            }
-          }
-        });
-
-        return {
-          toolRunResponse,
-          toolMsgParams
-        };
-      })
-    )
-  ).filter(Boolean) as ToolRunResponseType;
-
-  const flatToolsResponseData = toolsRunResponse.map((item) => item.toolRunResponse).flat();
+  const flatToolsResponseData = toolsRunResponse
+    .map((item) => item.toolRunResponse)
+    .flat()
+    .filter(Boolean) as DispatchFlowResponse[];
   // concat tool responses
   const dispatchFlowResponse = response
     ? response.dispatchFlowResponse.concat(flatToolsResponseData)
@@ -434,22 +476,22 @@ export const runToolWithToolChoice = async (
     const outputTokens = await countGptMessagesTokens(assistantToolMsgParams);
 
     /* 
-        ...
-        user
-        assistant: tool data
-        tool: tool response
-      */
+      ...
+      user
+      assistant: tool data
+      tool: tool response
+    */
     const completeMessages = [
       ...concatToolMessages,
       ...toolsRunResponse.map((item) => item?.toolMsgParams)
     ];
 
     /* 
-        Get tool node assistant response
-        history assistant
-        current tool assistant
-        tool child assistant
-      */
+      Get tool node assistant response
+      history assistant
+      current tool assistant
+      tool child assistant
+    */
     const toolNodeAssistant = GPTMessages2Chats([
       ...assistantToolMsgParams,
       ...toolsRunResponse.map((item) => item?.toolMsgParams)
@@ -478,12 +520,12 @@ export const runToolWithToolChoice = async (
     );
     // Check interactive response(Only 1 interaction is reserved)
     const workflowInteractiveResponseItem = toolsRunResponse.find(
-      (item) => item.toolRunResponse.workflowInteractiveResponse
+      (item) => item.toolRunResponse?.workflowInteractiveResponse
     );
     if (hasStopSignal || workflowInteractiveResponseItem) {
       // Get interactive tool data
       const workflowInteractiveResponse =
-        workflowInteractiveResponseItem?.toolRunResponse.workflowInteractiveResponse;
+        workflowInteractiveResponseItem?.toolRunResponse?.workflowInteractiveResponse;
 
       // Flashback traverses completeMessages, intercepting messages that know the first user
       const firstUserIndex = completeMessages.findLastIndex((item) => item.role === 'user');

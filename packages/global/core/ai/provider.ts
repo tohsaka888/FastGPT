@@ -4,25 +4,35 @@ export type ModelProviderIdType =
   | 'OpenAI'
   | 'Claude'
   | 'Gemini'
+  | 'Meta'
   | 'MistralAI'
   | 'Groq'
+  | 'Grok'
+  | 'AliCloud'
   | 'Qwen'
   | 'Doubao'
-  | 'ChatGLM'
   | 'DeepSeek'
+  | 'ChatGLM'
+  | 'Ernie'
   | 'Moonshot'
   | 'MiniMax'
   | 'SparkDesk'
   | 'Hunyuan'
   | 'Baichuan'
+  | 'StepFun'
   | 'Yi'
-  | 'Ernie'
+  | 'Siliconflow'
+  | 'PPIO'
   | 'Ollama'
+  | 'BAAI'
+  | 'FishAudio'
+  | 'Intern'
+  | 'Moka'
   | 'Other';
 
 export type ModelProviderType = {
   id: ModelProviderIdType;
-  name: string;
+  name: any;
   avatar: string;
 };
 
@@ -43,9 +53,19 @@ export const ModelProviderList: ModelProviderType[] = [
     avatar: 'model/gemini'
   },
   {
+    id: 'Meta',
+    name: 'Meta',
+    avatar: 'model/meta'
+  },
+  {
     id: 'MistralAI',
     name: 'MistralAI',
     avatar: 'model/mistral'
+  },
+  {
+    id: 'Grok',
+    name: 'Grok',
+    avatar: 'model/grok'
   },
   {
     id: 'Groq',
@@ -63,14 +83,19 @@ export const ModelProviderList: ModelProviderType[] = [
     avatar: 'model/doubao'
   },
   {
+    id: 'DeepSeek',
+    name: 'DeepSeek',
+    avatar: 'model/deepseek'
+  },
+  {
     id: 'ChatGLM',
     name: i18nT('common:model_chatglm'),
     avatar: 'model/chatglm'
   },
   {
-    id: 'DeepSeek',
-    name: 'DeepSeek',
-    avatar: 'model/deepseek'
+    id: 'Ernie',
+    name: i18nT('common:model_ernie'),
+    avatar: 'model/ernie'
   },
   {
     id: 'Moonshot',
@@ -98,19 +123,55 @@ export const ModelProviderList: ModelProviderType[] = [
     avatar: 'model/baichuan'
   },
   {
+    id: 'StepFun',
+    name: i18nT('common:model_stepfun'),
+    avatar: 'model/stepfun'
+  },
+  {
     id: 'Yi',
     name: i18nT('common:model_yi'),
     avatar: 'model/yi'
   },
-  {
-    id: 'Ernie',
-    name: i18nT('common:model_ernie'),
-    avatar: 'model/ernie'
-  },
+
   {
     id: 'Ollama',
     name: 'Ollama',
     avatar: 'model/ollama'
+  },
+  {
+    id: 'BAAI',
+    name: i18nT('common:model_baai'),
+    avatar: 'model/BAAI'
+  },
+  {
+    id: 'FishAudio',
+    name: 'FishAudio',
+    avatar: 'model/fishaudio'
+  },
+  {
+    id: 'Intern',
+    name: i18nT('common:model_intern'),
+    avatar: 'model/intern'
+  },
+  {
+    id: 'Moka',
+    name: i18nT('common:model_moka'),
+    avatar: 'model/moka'
+  },
+  {
+    id: 'AliCloud',
+    name: i18nT('common:model_alicloud'),
+    avatar: 'model/alicloud'
+  },
+  {
+    id: 'Siliconflow',
+    name: i18nT('common:model_siliconflow'),
+    avatar: 'model/siliconflow'
+  },
+  {
+    id: 'PPIO',
+    name: i18nT('common:model_ppio'),
+    avatar: 'model/ppio'
   },
   {
     id: 'Other',
@@ -122,6 +183,7 @@ export const ModelProviderMap = Object.fromEntries(
   ModelProviderList.map((item, index) => [item.id, { ...item, order: index }])
 );
 
-export const getModelProvider = (provider: ModelProviderIdType) => {
+export const getModelProvider = (provider?: ModelProviderIdType) => {
+  if (!provider) return ModelProviderMap.Other;
   return ModelProviderMap[provider] ?? ModelProviderMap.Other;
 };

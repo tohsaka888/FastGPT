@@ -97,7 +97,7 @@ export const createOrGetCollectionTags = async ({
       datasetId,
       tag: tagContent
     })),
-    { session }
+    { session, ordered: true }
   );
 
   return [...existingTags.map((tag) => tag._id), ...newTags.map((tag) => tag._id)];
@@ -174,6 +174,14 @@ export const syncCollection = async (collection: CollectionWithDatasetType) => {
   }
 
   await mongoSessionRun(async (session) => {
+    // Delete old collection
+    await delCollection({
+      collections: [collection],
+      delImg: false,
+      delFile: false,
+      session
+    });
+
     // Create new collection
     await createCollectionAndInsertData({
       session,
@@ -207,13 +215,6 @@ export const syncCollection = async (collection: CollectionWithDatasetType) => {
         createTime: collection.createTime,
         updateTime: new Date()
       }
-    });
-
-    // Delete old collection
-    await delCollection({
-      collections: [collection],
-      delRelatedSource: false,
-      session
     });
   });
 

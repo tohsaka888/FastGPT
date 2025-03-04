@@ -19,11 +19,13 @@ import { predictDataLimitLength } from '../../../../global/core/dataset/utils';
 import { mongoSessionRun } from '../../../common/mongo/sessionRun';
 import { createTrainingUsage } from '../../../support/wallet/usage/controller';
 import { UsageSourceEnum } from '@fastgpt/global/support/wallet/usage/constants';
-import { getLLMModel, getVectorModel } from '../../ai/model';
+import { getLLMModel, getEmbeddingModel } from '../../ai/model';
 import { pushDataListToTrainingQueue } from '../training/controller';
 import { MongoImage } from '../../../common/file/image/schema';
 import { hashStr } from '@fastgpt/global/common/string/tools';
 import { addDays } from 'date-fns';
+import { MongoDatasetDataText } from '../data/dataTextSchema';
+import { delay, retryFn } from '@fastgpt/global/common/system/utils';
 
 export const createCollectionAndInsertData = async ({
   dataset,
@@ -92,7 +94,7 @@ export const createCollectionAndInsertData = async ({
       tmbId,
       appName: usageName,
       billSource: UsageSourceEnum.training,
-      vectorModel: getVectorModel(dataset.vectorModel)?.name,
+      vectorModel: getEmbeddingModel(dataset.vectorModel)?.name,
       agentModel: getLLMModel(dataset.agentModel)?.name,
       session
     });
@@ -215,7 +217,7 @@ export async function createOneCollection({
         nextSyncTime
       }
     ],
-    { session }
+    { session, ordered: true }
   );
 
   return collection;
@@ -226,8 +228,14 @@ export const delCollectionRelatedSource = async ({
   collections,
   session
 }: {
-  collections: DatasetCollectionSchemaType[];
-  session: ClientSession;
+  collections: {
+    teamId: string;
+    fileId?: string;
+    metadata?: {
+      relatedImgId?: string;
+    };
+  }[];
+  session?: ClientSession;
 }) => {
   if (collections.length === 0) return;
 
@@ -240,12 +248,12 @@ export const delCollectionRelatedSource = async ({
     .map((item) => item?.metadata?.relatedImgId || '')
     .filter(Boolean);
 
-  // delete files
+  // Delete files
   await delFileByFileIdList({
     bucketName: BucketNameEnum.dataset,
     fileIdList
   });
-  // delete images
+  // Delete images
   await delImgByRelatedId({
     teamId,
     relateIds: relatedImageIds,
@@ -258,11 +266,13 @@ export const delCollectionRelatedSource = async ({
 export async function delCollection({
   collections,
   session,
-  delRelatedSource
+  delImg = true,
+  delFile = true
 }: {
   collections: DatasetCollectionSchemaType[];
   session: ClientSession;
-  delRelatedSource: boolean;
+  delImg: boolean;
+  delFile: boolean;
 }) {
   if (collections.length === 0) return;
 
@@ -273,78 +283,55 @@ export async function delCollection({
   const datasetIds = Array.from(new Set(collections.map((item) => String(item.datasetId))));
   const collectionIds = collections.map((item) => String(item._id));
 
-  // delete training data
-  await MongoDatasetTraining.deleteMany({
-    teamId,
-    datasetIds: { $in: datasetIds },
-    collectionId: { $in: collectionIds }
+  await retryFn(async () => {
+    await Promise.all([
+      // Delete training data
+      MongoDatasetTraining.deleteMany({
+        teamId,
+        datasetId: { $in: datasetIds },
+        collectionId: { $in: collectionIds }
+      }),
+      // Delete dataset_data_texts
+      MongoDatasetDataText.deleteMany({
+        teamId,
+        datasetId: { $in: datasetIds },
+        collectionId: { $in: collectionIds }
+      }),
+      // Delete dataset_datas
+      MongoDatasetData.deleteMany({
+        teamId,
+        datasetId: { $in: datasetIds },
+        collectionId: { $in: collectionIds }
+      }),
+      ...(delImg
+        ? [
+            delImgByRelatedId({
+              teamId,
+              relateIds: collections
+                .map((item) => item?.metadata?.relatedImgId || '')
+                .filter(Boolean)
+            })
+          ]
+        : []),
+      ...(delFile
+        ? [
+            delFileByFileIdList({
+              bucketName: BucketNameEnum.dataset,
+              fileIdList: collections.map((item) => item?.fileId || '').filter(Boolean)
+            })
+          ]
+        : []),
+      // Delete vector data
+      deleteDatasetDataVector({ teamId, datasetIds, collectionIds })
+    ]);
+
+    // delete collections
+    await MongoDatasetCollection.deleteMany(
+      {
+        teamId,
+        _id: { $in: collectionIds }
+      },
+      { session }
+    );
   });
-
-  /* file and imgs */
-  if (delRelatedSource) {
-    await delCollectionRelatedSource({ collections, session });
-  }
-
-  // delete dataset.datas
-  await MongoDatasetData.deleteMany(
-    { teamId, datasetIds: { $in: datasetIds }, collectionId: { $in: collectionIds } },
-    { session }
-  );
-
-  // delete collections
-  await MongoDatasetCollection.deleteMany(
-    {
-      teamId,
-      _id: { $in: collectionIds }
-    },
-    { session }
-  );
-
-  // no session delete: delete files, vector data
-  await deleteDatasetDataVector({ teamId, datasetIds, collectionIds });
-}
-
-/**
- * delete delOnlyCollection
- */
-export async function delOnlyCollection({
-  collections,
-  session
-}: {
-  collections: DatasetCollectionSchemaType[];
-  session: ClientSession;
-}) {
-  if (collections.length === 0) return;
-
-  const teamId = collections[0].teamId;
-
-  if (!teamId) return Promise.reject('teamId is not exist');
-
-  const datasetIds = Array.from(new Set(collections.map((item) => String(item.datasetId))));
-  const collectionIds = collections.map((item) => String(item._id));
-
-  // delete training data
-  await MongoDatasetTraining.deleteMany({
-    teamId,
-    datasetIds: { $in: datasetIds },
-    collectionId: { $in: collectionIds }
-  });
-
-  // delete dataset.datas
-  await MongoDatasetData.deleteMany(
-    { teamId, datasetIds: { $in: datasetIds }, collectionId: { $in: collectionIds } },
-    { session }
-  );
-
-  // delete collections
-  await MongoDatasetCollection.deleteMany(
-    {
-      teamId,
-      _id: { $in: collectionIds }
-    },
-    { session }
-  );
-
-  // no session delete: delete files, vector data
-  await deleteDatasetDataVector({ teamId, datasetIds, collectionIds });
 }

@@ -7,6 +7,13 @@ toc: true
 weight: 707
 ---
 
+## 前置知识
+
+1. 基础的网络知识：端口，防火墙……  
+2. Docker 和 Docker Compose 基础知识  
+3. 大模型相关接口和参数  
+4. RAG 相关知识：向量模型，向量数据库，向量检索
+
 ## 部署架构图
 
 ![](/imgs/sealos-fastgpt.webp)
@@ -23,19 +30,19 @@ weight: 707
 
 ### PgVector版本
 
-体验测试首选
+非常轻量，适合数据量在 5000 万以下。
 
 {{< table "table-hover table-striped-columns" >}}
 | 环境 | 最低配置（单节点） | 推荐配置 |
 | ---- | ---- | ---- |
-| 测试 | 2c2g  | 2c4g |
+| 测试（可以把计算进程设置少一些） | 2c4g  | 2c8g |
 | 100w 组向量 | 4c8g 50GB | 4c16g 50GB |
 | 500w 组向量 | 8c32g 200GB | 16c64g 200GB |
 {{< /table >}}
 
 ### Milvus版本
 
-生产部署首选，对于千万级以上向量性能更优秀。
+对于亿级以上向量性能更优秀。
 
 [点击查看 Milvus 官方推荐配置](https://milvus.io/docs/prerequisite-docker.md)
 
@@ -111,7 +118,7 @@ brew install orbstack
 非 Linux 环境或无法访问外网环境，可手动创建一个目录，并下载配置文件和对应版本的`docker-compose.yml`，在这个文件夹中依据下载的配置文件运行docker，若作为本地开发使用推荐`docker-compose-pgvector`版本，并且自行拉取并运行`sandbox`和`fastgpt`，并在docker配置文件中注释掉`sandbox`和`fastgpt`的部分
 
 - [config.json](https://raw.githubusercontent.com/labring/FastGPT/refs/heads/main/projects/app/data/config.json)
-- [docker-compose.yml](https://github.com/labring/FastGPT/blob/main/files/docker) (注意，不同向量库版本的文件不一样)
+- [docker-compose.yml](https://github.com/labring/FastGPT/blob/main/deploy/docker) (注意，不同向量库版本的文件不一样)
 
 {{% alert icon="🤖" context="success" %}}
 
@@ -127,11 +134,11 @@ cd fastgpt
 curl -O https://raw.githubusercontent.com/labring/FastGPT/main/projects/app/data/config.json
 
 # pgvector 版本(测试推荐，简单快捷)
-curl -o docker-compose.yml https://raw.githubusercontent.com/labring/FastGPT/main/files/docker/docker-compose-pgvector.yml
+curl -o docker-compose.yml https://raw.githubusercontent.com/labring/FastGPT/main/deploy/docker/docker-compose-pgvector.yml
 # milvus 版本
-# curl -o docker-compose.yml https://raw.githubusercontent.com/labring/FastGPT/main/files/docker/docker-compose-milvus.yml
+# curl -o docker-compose.yml https://raw.githubusercontent.com/labring/FastGPT/main/deploy/docker/docker-compose-milvus.yml
 # zilliz 版本
-# curl -o docker-compose.yml https://raw.githubusercontent.com/labring/FastGPT/main/files/docker/docker-compose-zilliz.yml
+# curl -o docker-compose.yml https://raw.githubusercontent.com/labring/FastGPT/main/deploy/docker/docker-compose-zilliz.yml
 ```
 
 ### 2. 修改环境变量
@@ -194,6 +201,8 @@ docker restart oneapi
 
 在OneApi中添加合适的AI模型渠道。[点击查看相关教程](/docs/development/modelconfig/one-api/)
 
+只需要添加模型即可，模板已经配置好了oneapi的连接地址和令牌，无需变更。
+
 ### 5. 访问 FastGPT
 
 目前可以通过 `ip:3000` 直接访问(注意防火墙)。登录用户名为 `root`，密码为`docker-compose.yml`环境变量里设置的 `DEFAULT_ROOT_PSW`。
@@ -201,6 +210,12 @@ docker restart oneapi
 如果需要域名访问，请自行安装并配置 Nginx。
 
 首次运行，会自动初始化 root 用户，密码为 `1234`（与环境变量中的`DEFAULT_ROOT_PSW`一致），日志里会提示一次`MongoServerError: Unable to read from a snapshot due to pending collection catalog changes;`可忽略。
+
+### 6. 配置模型
+
+登录FastGPT后，进入模型配置页面，务必先配置至少一个语言模型和一个向量模型，否则系统无法正常使用。
+
+[点击查看模型配置教程](/docs/development/modelConfig/intro/)
 
 ## FAQ
 

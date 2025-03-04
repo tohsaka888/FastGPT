@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef } from 'react';
+import React, { useCallback, useMemo } from 'react';
 import {
   Box,
   Flex,
@@ -9,8 +9,7 @@ import {
   Link,
   Progress,
   Grid,
-  BoxProps,
-  FlexProps
+  BoxProps
 } from '@chakra-ui/react';
 import { useForm } from 'react-hook-form';
 import { UserUpdateParams } from '@/types/user';
@@ -20,7 +19,6 @@ import type { UserType } from '@fastgpt/global/support/user/type.d';
 import { useQuery } from '@tanstack/react-query';
 import dynamic from 'next/dynamic';
 import { useSelectFile } from '@/web/common/file/hooks/useSelectFile';
-import { compressImgFileAndUpload } from '@/web/common/file/controller';
 import { useSystemStore } from '@/web/common/system/useSystemStore';
 import { useTranslation } from 'next-i18next';
 import Avatar from '@fastgpt/web/components/common/Avatar';
@@ -29,7 +27,6 @@ import MyTooltip from '@fastgpt/web/components/common/MyTooltip';
 import { formatStorePrice2Read } from '@fastgpt/global/support/wallet/usage/tools';
 import { putUpdateMemberName } from '@/web/support/user/team/api';
 import { getDocPath } from '@/web/common/system/doc';
-import { MongoImageTypeEnum } from '@fastgpt/global/common/file/image/constants';
 import {
   StandardSubLevelEnum,
   standardSubLevelMap
@@ -41,15 +38,20 @@ import StandardPlanContentList from '@/components/support/wallet/StandardPlanCon
 import QuestionTip from '@fastgpt/web/components/common/MyTooltip/QuestionTip';
 import { useSystem } from '@fastgpt/web/hooks/useSystem';
 import { getWebReqUrl } from '@fastgpt/web/common/system/utils';
-import AccountContainer from '../components/AccountContainer';
+import AccountContainer from '@/pageComponents/account/AccountContainer';
 import { serviceSideProps } from '@fastgpt/web/common/system/nextjs';
 import { useRouter } from 'next/router';
-import TeamSelector from '../components/TeamSelector';
+import TeamSelector from '@/pageComponents/account/TeamSelector';
+import { getWorkorderURL } from '@/web/common/workorder/api';
+import { useRequest2 } from '@fastgpt/web/hooks/useRequest';
 
-const StandDetailModal = dynamic(() => import('./components/standardDetailModal'), { ssr: false });
-const ConversionModal = dynamic(() => import('./components/ConversionModal'));
-const UpdatePswModal = dynamic(() => import('./components/UpdatePswModal'));
-const UpdateNotification = dynamic(() => import('./components/UpdateNotificationModal'));
+const StandDetailModal = dynamic(
+  () => import('@/pageComponents/account/info/standardDetailModal'),
+  { ssr: false }
+);
+const ConversionModal = dynamic(() => import('@/pageComponents/account/info/ConversionModal'));
+const UpdatePswModal = dynamic(() => import('@/pageComponents/account/info/UpdatePswModal'));
+const UpdateContact = dynamic(() => import('@/components/support/user/inform/UpdateContactModal'));
 const CommunityModal = dynamic(() => import('@/components/CommunityModal'));
 
 const ModelPriceModal = dynamic(() =>
@@ -108,7 +110,7 @@ const MyInfo = ({ onOpenContact }: { onOpenContact: () => void }) => {
   const theme = useTheme();
   const { feConfigs } = useSystemStore();
   const { t } = useTranslation();
-  const { userInfo, updateUserInfo, teamPlanStatus } = useUserStore();
+  const { userInfo, updateUserInfo, teamPlanStatus, initUserInfo } = useUserStore();
   const { reset } = useForm<UserUpdateParams>({
     defaultValues: userInfo as UserType
   });
@@ -127,11 +129,15 @@ const MyInfo = ({ onOpenContact }: { onOpenContact: () => void }) => {
     onOpen: onOpenUpdatePsw
   } = useDisclosure();
   const {
-    isOpen: isOpenUpdateNotification,
-    onClose: onCloseUpdateNotification,
-    onOpen: onOpenUpdateNotification
+    isOpen: isOpenUpdateContact,
+    onClose: onCloseUpdateContact,
+    onOpen: onOpenUpdateContact
   } = useDisclosure();
-  const { File, onOpen: onOpenSelectFile } = useSelectFile({
+  const {
+    File,
+    onOpen: onOpenSelectFile,
+    onSelectImage
+  } = useSelectFile({
     fileType: '.jpg,.png',
     multiple: false
   });
@@ -151,38 +157,13 @@ const MyInfo = ({ onOpenContact }: { onOpenContact: () => void }) => {
     [reset, t, toast, updateUserInfo]
   );
 
-  const onSelectFile = useCallback(
-    async (e: File[]) => {
-      const file = e[0];
-      if (!file || !userInfo) return;
-      try {
-        const src = await compressImgFileAndUpload({
-          type: MongoImageTypeEnum.userAvatar,
-          file,
-          maxW: 300,
-          maxH: 300
-        });
-
-        onclickSave({
-          ...userInfo,
-          avatar: src
-        });
-      } catch (err: any) {
-        toast({
-          title: typeof err === 'string' ? err : t('account_info:avatar_selection_exception'),
-          status: 'warning'
-        });
-      }
-    },
-    [onclickSave, t, toast, userInfo]
-  );
-
   const labelStyles: BoxProps = {
     flex: '0 0 80px',
     fontSize: 'sm',
     color: 'myGray.900'
   };
 
+  const isSyncMember = feConfigs.register_method?.includes('sync');
   return (
     <Box>
       {/* user info */}
@@ -247,16 +228,18 @@ const MyInfo = ({ onOpenContact }: { onOpenContact: () => void }) => {
             <Box {...labelStyles}>{t('account_info:member_name')}:&nbsp;</Box>
             <Input
               flex={'1 0 0'}
+              disabled={isSyncMember}
               defaultValue={userInfo?.team?.memberName || 'Member'}
               title={t('account_info:click_modify_nickname')}
               borderColor={'transparent'}
               transform={'translateX(-11px)'}
               maxLength={20}
-              onBlur={(e) => {
+              onBlur={async (e) => {
                 const val = e.target.value;
                 if (val === userInfo?.team?.memberName) return;
                 try {
-                  putUpdateMemberName(val);
+                  await putUpdateMemberName(val);
+                  initUserInfo();
                 } catch (error) {}
               }}
             />
@@ -277,32 +260,21 @@ const MyInfo = ({ onOpenContact }: { onOpenContact: () => void }) => {
         )}
         {feConfigs?.isPlus && (
           <Flex mt={6} alignItems={'center'}>
-            <Box {...labelStyles}>{t('account_info:notification_receiving')}:&nbsp;</Box>
-            <Box
-              flex={1}
-              {...(!userInfo?.team.notificationAccount && userInfo?.permission.isOwner
-                ? { color: 'red.600' }
-                : {})}
-            >
-              {userInfo?.team.notificationAccount
-                ? userInfo?.team.notificationAccount
-                : userInfo?.permission.isOwner
-                  ? t('account_info:please_bind_notification_receiving_path')
-                  : t('account_info:reminder_create_bound_notification_account')}
+            <Box {...labelStyles}>{t('account_info:contact')}:&nbsp;</Box>
+            <Box flex={1} {...(!userInfo?.contact ? { color: 'red.600' } : {})}>
+              {userInfo?.contact ? userInfo?.contact : t('account_info:please_bind_contact')}
             </Box>
 
-            {userInfo?.permission.isOwner && (
-              <Button size={'sm'} variant={'whitePrimary'} onClick={onOpenUpdateNotification}>
-                {t('account_info:change')}
-              </Button>
-            )}
+            <Button size={'sm'} variant={'whitePrimary'} onClick={onOpenUpdateContact}>
+              {t('account_info:change')}
+            </Button>
           </Flex>
         )}
         {feConfigs.isPlus && (
           <Flex mt={6} alignItems={'center'}>
             <Box {...labelStyles}>{t('account_info:user_team_team_name')}:&nbsp;</Box>
             <Flex flex={'1 0 0'} w={0} align={'center'}>
-              <TeamSelector height={'28px'} w={'100%'} showManage />
+              <TeamSelector height={'28px'} w={'100%'} showManage onChange={initUserInfo} />
             </Flex>
           </Flex>
         )}
@@ -328,8 +300,22 @@ const MyInfo = ({ onOpenContact }: { onOpenContact: () => void }) => {
         <ConversionModal onClose={onCloseConversionModal} onOpenContact={onOpenContact} />
       )}
       {isOpenUpdatePsw && <UpdatePswModal onClose={onCloseUpdatePsw} />}
-      {isOpenUpdateNotification && <UpdateNotification onClose={onCloseUpdateNotification} />}
-      <File onSelect={onSelectFile} />
+      {isOpenUpdateContact && <UpdateContact onClose={onCloseUpdateContact} mode="contact" />}
+      <File
+        onSelect={(e) =>
+          onSelectImage(e, {
+            maxW: 300,
+            maxH: 300,
+            callback: (src) => {
+              if (!userInfo) return;
+              onclickSave({
+                ...userInfo,
+                avatar: src
+              });
+            }
+          })
+        }
+      />
     </Box>
   );
 };
@@ -597,12 +583,17 @@ const ButtonStyles = {
 };
 const Other = ({ onOpenContact }: { onOpenContact: () => void }) => {
   const { feConfigs } = useSystemStore();
+  const { teamPlanStatus } = useUserStore();
   const { t } = useTranslation();
   const { isPc } = useSystem();
-  const { userInfo, updateUserInfo } = useUserStore();
 
-  const { reset } = useForm<UserUpdateParams>({
-    defaultValues: userInfo as UserType
+  const { runAsync: onFeedback } = useRequest2(getWorkorderURL, {
+    manual: true,
+    onSuccess(data) {
+      if (data) {
+        window.open(data.redirectUrl);
+      }
+    }
   });
 
   return (
@@ -641,6 +632,16 @@ const Other = ({ onOpenContact }: { onOpenContact: () => void }) => {
             </Box>
           </Flex>
         )}
+        {feConfigs?.show_workorder &&
+          teamPlanStatus &&
+          teamPlanStatus.standard?.currentSubLevel !== StandardSubLevelEnum.free && (
+            <Flex onClick={onFeedback} {...ButtonStyles}>
+              <MyIcon name={'feedback'} w={'18px'} color={'myGray.600'} />
+              <Box ml={2} flex={1}>
+                {t('common:question_feedback')}
+              </Box>
+            </Flex>
+          )}
       </Grid>
     </Box>
   );
