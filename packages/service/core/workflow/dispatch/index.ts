@@ -72,6 +72,7 @@ import { dispatchLoopEnd } from './loop/runLoopEnd';
 import { dispatchLoopStart } from './loop/runLoopStart';
 import { dispatchFormInput } from './interactive/formInput';
 import { dispatchToolParams } from './agent/runTool/toolParams';
+import { getErrText } from '@fastgpt/global/common/error/utils';
 
 const callbackMap: Record<FlowNodeTypeEnum, Function> = {
   [FlowNodeTypeEnum.workflowStart]: dispatchWorkflowStart,
@@ -203,6 +204,7 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
     { inputs = [] }: RuntimeNodeItemType,
     {
       answerText = '',
+      reasoningText,
       responseData,
       nodeDispatchUsages,
       toolResponses,
@@ -212,6 +214,7 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
     }: Omit<
       DispatchNodeResultType<{
         [NodeOutputKeyEnum.answerText]?: string;
+        [NodeOutputKeyEnum.reasoningText]?: string;
         [DispatchNodeResponseKeyEnum.nodeResponse]?: ChatHistoryItemResType;
       }>,
       'nodeResponse'
@@ -229,28 +232,46 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
       chatNodeUsages = chatNodeUsages.concat(nodeDispatchUsages);
     }
 
-    if (toolResponses !== undefined) {
+    if (toolResponses !== undefined && toolResponses !== null) {
       if (Array.isArray(toolResponses) && toolResponses.length === 0) return;
-      if (typeof toolResponses === 'object' && Object.keys(toolResponses).length === 0) {
+      if (
+        !Array.isArray(toolResponses) &&
+        typeof toolResponses === 'object' &&
+        Object.keys(toolResponses).length === 0
+      )
         return;
-      }
       toolRunResponse = toolResponses;
     }
 
     // Histories store
     if (assistantResponses) {
       chatAssistantResponse = chatAssistantResponse.concat(assistantResponses);
-    } else if (answerText) {
-      // save assistant text response
-      const isResponseAnswerText =
-        inputs.find((item) => item.key === NodeInputKeyEnum.aiChatIsResponseText)?.value ?? true;
-      if (isResponseAnswerText) {
-        chatAssistantResponse.push({
-          type: ChatItemValueTypeEnum.text,
-          text: {
-            content: answerText
-          }
-        });
+    } else {
+      if (reasoningText) {
+        const isResponseReasoningText = inputs.find(
+          (item) => item.key === NodeInputKeyEnum.aiChatReasoning
+        )?.value;
+        if (isResponseReasoningText) {
+          chatAssistantResponse.push({
+            type: ChatItemValueTypeEnum.reasoning,
+            reasoning: {
+              content: reasoningText
+            }
+          });
+        }
+      }
+      if (answerText) {
+        // save assistant text response
+        const isResponseAnswerText =
+          inputs.find((item) => item.key === NodeInputKeyEnum.aiChatIsResponseText)?.value ?? true;
+        if (isResponseAnswerText) {
+          chatAssistantResponse.push({
+            type: ChatItemValueTypeEnum.text,
+            text: {
+              content: answerText
+            }
+          });
+        }
       }
     }
 
@@ -488,16 +509,16 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
       if (input.key === dynamicInput?.key) return;
 
       // Skip some special key
-      if (input.key === NodeInputKeyEnum.childrenNodeIdList) {
+      if (
+        [NodeInputKeyEnum.childrenNodeIdList, NodeInputKeyEnum.httpJsonBody].includes(
+          input.key as any
+        )
+      ) {
         params[input.key] = input.value;
-
         return;
       }
 
-      // replace {{xx}} variables
-      // let value = replaceVariable(input.value, variables);
-
-      // replace {{$xx.xx$}} variables
+      // replace {{$xx.xx$}} and {{xx}} variables
       let value = replaceEditorVariable({
         text: input.value,
         nodes: runtimeNodes,
@@ -565,6 +586,8 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
           const targetEdges = runtimeEdges.filter((item) => item.source === node.nodeId);
           const skipHandleIds = targetEdges.map((item) => item.sourceHandle);
 
+          toolRunResponse = getErrText(error);
+
           // Skip all edges and return error
           return {
             [DispatchNodeResponseKeyEnum.nodeResponse]: {
@@ -603,6 +626,11 @@ export async function dispatchWorkFlow(data: Props): Promise<DispatchFlowRespons
         ...variables,
         ...dispatchRes[DispatchNodeResponseKeyEnum.newVariables]
       };
+    }
+
+    // Error
+    if (dispatchRes?.responseData?.error) {
+      addLog.warn('workflow error', dispatchRes.responseData.error);
     }
 
     return {

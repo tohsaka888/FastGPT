@@ -16,7 +16,7 @@ import MyBox from '../components/common/MyBox';
 import { useTranslation } from 'next-i18next';
 
 type ItemHeight<T> = (index: number, data: T) => number;
-const thresholdVal = 200;
+const thresholdVal = 100;
 
 export type ScrollListType = ({
   children,
@@ -214,6 +214,11 @@ export function useScrollPagination<
     async (init = false, ScrollContainerRef?: RefObject<HTMLDivElement>) => {
       if (noMore && !init) return;
 
+      if (init) {
+        setData([]);
+        setTotal(0);
+      }
+
       const offset = init ? 0 : data.length;
 
       setTrue();
@@ -269,8 +274,10 @@ export function useScrollPagination<
     ({
       children,
       ScrollContainerRef,
+      isLoading,
       ...props
     }: {
+      isLoading?: boolean;
       children: ReactNode;
       ScrollContainerRef?: RefObject<HTMLDivElement>;
     } & BoxProps) => {
@@ -286,7 +293,7 @@ export function useScrollPagination<
       // Watch scroll position
       useThrottleEffect(
         () => {
-          if (!ref?.current || noMore) return;
+          if (!ref?.current || noMore || isLoading || data.length === 0) return;
           const { scrollTop, scrollHeight, clientHeight } = ref.current;
 
           if (
@@ -302,7 +309,7 @@ export function useScrollPagination<
       );
 
       return (
-        <Box {...props} ref={ref} overflow={'overlay'}>
+        <MyBox ref={ref} h={'100%'} overflow={'auto'} isLoading={isLoading} {...props}>
           {scrollLoadType === 'top' && total > 0 && isLoading && (
             <Box mt={2} fontSize={'xs'} color={'blackAlpha.500'} textAlign={'center'}>
               {t('common:common.is_requesting')}
@@ -325,7 +332,7 @@ export function useScrollPagination<
             </Box>
           )}
           {isEmpty && EmptyTip}
-        </Box>
+        </MyBox>
       );
     }
   );
