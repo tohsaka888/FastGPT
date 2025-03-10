@@ -1,10 +1,11 @@
 import { NodeOutputKeyEnum } from '@fastgpt/global/core/workflow/constants';
 import { DispatchNodeResponseKeyEnum } from '@fastgpt/global/core/workflow/runtime/constants';
 import type {
+  ChatDispatchProps,
   DispatchNodeResultType,
   RuntimeNodeItemType
 } from '@fastgpt/global/core/workflow/runtime/type';
-import { ModelTypeEnum, getLLMModel } from '../../../../ai/model';
+import { getLLMModel } from '../../../../ai/model';
 import { filterToolNodeIdByEdges, getHistories } from '../../utils';
 import { runToolWithToolChoice } from './toolChoice';
 import { DispatchToolModuleProps, ToolNodeItemType } from './type.d';
@@ -30,6 +31,7 @@ import { parseUrlToFileType } from '@fastgpt/global/common/file/tools';
 import { Prompt_DocumentQuote } from '@fastgpt/global/core/ai/prompt/AIChat';
 import { FlowNodeTypeEnum } from '@fastgpt/global/core/workflow/node/constant';
 import { postTextCensor } from '../../../../../common/api/requestPlusApi';
+import { ModelTypeEnum } from '@fastgpt/global/core/ai/model';
 
 type Response = DispatchNodeResultType<{
   [NodeOutputKeyEnum.answerText]: string;
@@ -45,7 +47,7 @@ export const dispatchRunTools = async (props: DispatchToolModuleProps): Promise<
     query,
     requestOrigin,
     chatConfig,
-    runningAppInfo: { teamId },
+    runningUserInfo,
     externalProvider,
     params: {
       model,
@@ -53,13 +55,17 @@ export const dispatchRunTools = async (props: DispatchToolModuleProps): Promise<
       userChatInput,
       history = 6,
       fileUrlList: fileLinks,
-      aiChatVision
+      aiChatVision,
+      aiChatReasoning
     }
   } = props;
 
   const toolModel = getLLMModel(model);
   const useVision = aiChatVision && toolModel.vision;
   const chatHistories = getHistories(history, histories);
+
+  props.params.aiChatVision = aiChatVision && toolModel.vision;
+  props.params.aiChatReasoning = aiChatReasoning && toolModel.reasoning;
 
   const toolNodeIds = filterToolNodeIdByEdges({ nodeId, edges: runtimeEdges });
 
@@ -98,10 +104,11 @@ export const dispatchRunTools = async (props: DispatchToolModuleProps): Promise<
 
   const globalFiles = chatValue2RuntimePrompt(query).files;
   const { documentQuoteText, userFiles } = await getMultiInput({
+    runningUserInfo,
     histories: chatHistories,
     requestOrigin,
     maxFiles: chatConfig?.fileSelectConfig?.maxFiles || 20,
-    teamId,
+    customPdfParse: chatConfig?.fileSelectConfig?.customPdfParse,
     fileLinks,
     inputFiles: globalFiles,
     hasReadFilesTool
@@ -288,19 +295,21 @@ export const dispatchRunTools = async (props: DispatchToolModuleProps): Promise<
 };
 
 const getMultiInput = async ({
+  runningUserInfo,
   histories,
   fileLinks,
   requestOrigin,
   maxFiles,
-  teamId,
+  customPdfParse,
   inputFiles,
   hasReadFilesTool
 }: {
+  runningUserInfo: ChatDispatchProps['runningUserInfo'];
   histories: ChatItemType[];
   fileLinks?: string[];
   requestOrigin?: string;
   maxFiles: number;
-  teamId: string;
+  customPdfParse?: boolean;
   inputFiles: UserChatItemValueItemType['file'][];
   hasReadFilesTool: boolean;
 }) => {
@@ -328,12 +337,14 @@ const getMultiInput = async ({
     urls,
     requestOrigin,
     maxFiles,
-    teamId
+    customPdfParse,
+    teamId: runningUserInfo.teamId,
+    tmbId: runningUserInfo.tmbId
   });
 
   return {
     documentQuoteText: text,
-    userFiles: fileLinks.map((url) => parseUrlToFileType(url))
+    userFiles: fileLinks.map((url) => parseUrlToFileType(url)).filter(Boolean)
   };
 };
 

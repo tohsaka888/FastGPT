@@ -99,10 +99,24 @@ export const useApiDatasetRequest = ({ apiServer }: { apiServer: APIFileServer }
     if (files.some((file) => !file.id || !file.name || typeof file.type === 'undefined')) {
       return Promise.reject('Invalid file data format');
     }
-    return files;
+
+    const formattedFiles = files.map((file) => ({
+      ...file,
+      hasChild: file.type === 'folder'
+    }));
+
+    return formattedFiles;
   };
 
-  const getFileContent = async ({ teamId, apiFileId }: { teamId: string; apiFileId: string }) => {
+  const getFileContent = async ({
+    teamId,
+    tmbId,
+    apiFileId
+  }: {
+    teamId: string;
+    tmbId: string;
+    apiFileId: string;
+  }) => {
     const data = await request<APIFileContentResponse>(
       `/v1/file/content`,
       { id: apiFileId },
@@ -117,6 +131,7 @@ export const useApiDatasetRequest = ({ apiServer }: { apiServer: APIFileServer }
     if (previewUrl) {
       const rawText = await readFileRawTextByUrl({
         teamId,
+        tmbId,
         url: previewUrl,
         relatedId: apiFileId
       });

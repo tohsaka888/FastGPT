@@ -75,6 +75,7 @@ const MyModal = ({
             py={'10px'}
             fontSize={'md'}
             fontWeight={'bold'}
+            minH={['46px', '53px']}
           >
             {iconSrc && (
               <>
@@ -83,7 +84,7 @@ const MyModal = ({
                   objectFit={'contain'}
                   alt=""
                   src={iconSrc}
-                  w={'1.5rem'}
+                  w={'20px'}
                   borderRadius={'sm'}
                 />
               </>
