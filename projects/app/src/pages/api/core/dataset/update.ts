@@ -28,6 +28,8 @@ import { DatasetErrEnum } from '@fastgpt/global/common/error/code/dataset';
 import { MongoDatasetTraining } from '@fastgpt/service/core/dataset/training/schema';
 import { MongoDatasetCollection } from '@fastgpt/service/core/dataset/collection/schema';
 import { addDays } from 'date-fns';
+import { refreshSourceAvatar } from '@fastgpt/service/common/file/image/controller';
+import { MongoResourcePermission } from '@fastgpt/service/support/permission/schema';
 
 export type DatasetUpdateQuery = {};
 export type DatasetUpdateResponse = any;
@@ -54,6 +56,7 @@ async function handler(
     avatar,
     intro,
     agentModel,
+    vlmModel,
     websiteConfig,
     externalReadUrl,
     apiServer,
@@ -107,7 +110,7 @@ async function handler(
   updateTraining({
     teamId: dataset.teamId,
     datasetId: id,
-    agentModel: agentModel?.model
+    agentModel
   });
 
   const onUpdate = async (session: ClientSession) => {
@@ -117,7 +120,8 @@ async function handler(
         ...parseParentIdInMongo(parentId),
         ...(name && { name }),
         ...(avatar && { avatar }),
-        ...(agentModel && { agentModel: agentModel.model }),
+        ...(agentModel && { agentModel }),
+        ...(vlmModel && { vlmModel }),
         ...(websiteConfig && { websiteConfig }),
         ...(status && { status }),
         ...(intro !== undefined && { intro }),
@@ -144,6 +148,8 @@ async function handler(
       autoSync,
       session
     });
+
+    await refreshSourceAvatar(avatar, dataset.avatar, session);
   };
 
   await mongoSessionRun(async (session) => {
@@ -172,6 +178,12 @@ async function handler(
           collaborators: parentClbsAndGroups,
           session
         });
+      } else {
+        // Not folder, delete all clb
+        await MongoResourcePermission.deleteMany(
+          { resourceId: id, teamId: dataset.teamId, resourceType: PerResourceTypeEnum.dataset },
+          { session }
+        );
       }
       return onUpdate(session);
     } else {
@@ -202,7 +214,7 @@ const updateTraining = async ({
       $set: {
         model: agentModel,
         retryCount: 5,
-        lockTime: new Date()
+        lockTime: new Date('2000/1/1')
       }
     }
   );

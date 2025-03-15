@@ -15,7 +15,9 @@ import { TeamDefaultPermissionVal } from '@fastgpt/global/support/permission/use
 import { MongoMemberGroupModel } from '../../permission/memberGroup/memberGroupSchema';
 import { mongoSessionRun } from '../../../common/mongo/sessionRun';
 import { DefaultGroupName } from '@fastgpt/global/support/user/team/group/constant';
-import { getAIApi, openaiBaseUrl } from '../../../core/ai/config';
+import { getAIApi } from '../../../core/ai/config';
+import { createRootOrg } from '../../permission/org/controllers';
+import { refreshSourceAvatar } from '../../../common/file/image/controller';
 
 async function getTeamMember(match: Record<string, any>): Promise<TeamTmbItemType> {
   const tmb = await MongoTeamMember.findOne(match).populate<{ team: TeamSchema }>('team').lean();
@@ -32,15 +34,15 @@ async function getTeamMember(match: Record<string, any>): Promise<TeamTmbItemTyp
   return {
     userId: String(tmb.userId),
     teamId: String(tmb.teamId),
+    teamAvatar: tmb.team.avatar,
     teamName: tmb.team.name,
     memberName: tmb.name,
-    avatar: tmb.team.avatar,
+    avatar: tmb.avatar,
     balance: tmb.team.balance,
     tmbId: String(tmb._id),
     teamDomain: tmb.team?.teamDomain,
     role: tmb.role,
     status: tmb.status,
-    defaultTeam: tmb.defaultTeam,
     permission: new TeamPermission({
       per: Per ?? TeamDefaultPermissionVal,
       isOwner: tmb.role === TeamMemberRoleEnum.owner
@@ -68,8 +70,7 @@ export async function getUserDefaultTeam({ userId }: { userId: string }) {
     return Promise.reject('tmbId or userId is required');
   }
   return getTeamMember({
-    userId: new Types.ObjectId(userId),
-    defaultTeam: true
+    userId: new Types.ObjectId(userId)
   });
 }
 
@@ -77,13 +78,11 @@ export async function createDefaultTeam({
   userId,
   teamName = 'My Team',
   avatar = '/icon/logo.svg',
-  balance,
   session
 }: {
   userId: string;
   teamName?: string;
   avatar?: string;
-  balance?: number;
   session: ClientSession;
 }) {
   // auth default team
@@ -100,7 +99,6 @@ export async function createDefaultTeam({
           ownerId: userId,
           name: teamName,
           avatar,
-          balance,
           createTime: new Date()
         }
       ],
@@ -132,15 +130,11 @@ export async function createDefaultTeam({
       ],
       { session }
     );
-    console.log('create default team and group', userId);
+    await createRootOrg({ teamId: tmb.teamId, session });
+    console.log('create default team, group and root org', userId);
     return tmb;
   } else {
     console.log('default team exist', userId);
-    await MongoTeam.findByIdAndUpdate(tmb.teamId, {
-      $set: {
-        ...(balance !== undefined && { balance })
-      }
-    });
   }
 }
 
@@ -156,7 +150,7 @@ export async function updateTeam({
   // auth openai key
   if (openaiAccount?.key) {
     console.log('auth user openai key', openaiAccount?.key);
-    const baseUrl = openaiAccount?.baseUrl || openaiBaseUrl;
+    const baseUrl = openaiAccount?.baseUrl || 'https://api.openai.com/v1';
     openaiAccount.baseUrl = baseUrl;
 
     const ai = getAIApi({
@@ -215,7 +209,8 @@ export async function updateTeam({
       return obj;
     })();
 
-    await MongoTeam.findByIdAndUpdate(
+    // This is where we get the old team
+    const team = await MongoTeam.findByIdAndUpdate(
       teamId,
       {
         $set: {
@@ -241,6 +236,8 @@ export async function updateTeam({
         },
         { session }
       );
+
+      await refreshSourceAvatar(avatar, team?.avatar, session);
     }
   });
 }

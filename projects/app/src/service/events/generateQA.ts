@@ -10,7 +10,6 @@ import { Prompt_AgentQA } from '@fastgpt/global/core/ai/prompt/agent';
 import type { PushDatasetDataChunkProps } from '@fastgpt/global/core/dataset/api.d';
 import { getLLMModel } from '@fastgpt/service/core/ai/model';
 import { checkTeamAiPointsAndLock } from './utils';
-import { checkInvalidChunkAndLock } from '@fastgpt/service/core/dataset/training/utils';
 import { addMinutes } from 'date-fns';
 import {
   countGptMessagesTokens,
@@ -18,7 +17,10 @@ import {
 } from '@fastgpt/service/common/string/tiktoken/index';
 import { pushDataListToTrainingQueueByCollectionId } from '@fastgpt/service/core/dataset/training/controller';
 import { loadRequestMessages } from '@fastgpt/service/core/chat/utils';
-import { llmCompletionsBodyFormat } from '@fastgpt/service/core/ai/utils';
+import {
+  llmCompletionsBodyFormat,
+  llmStreamResponseToAnswerText
+} from '@fastgpt/service/core/ai/utils';
 
 const reduceQueue = () => {
   global.qaQueueLen = global.qaQueueLen > 0 ? global.qaQueueLen - 1 : 0;
@@ -44,7 +46,7 @@ export async function generateQA(): Promise<any> {
         {
           mode: TrainingModeEnum.qa,
           retryCount: { $gte: 0 },
-          lockTime: { $lte: addMinutes(new Date(), -6) }
+          lockTime: { $lte: addMinutes(new Date(), -10) }
         },
         {
           lockTime: new Date(),
@@ -120,12 +122,12 @@ ${replaceVariable(Prompt_AgentQA.fixedText, { text })}`;
           model: modelData.model,
           temperature: 0.3,
           messages: await loadRequestMessages({ messages, useVision: false }),
-          stream: false
+          stream: true
         },
         modelData
       )
     });
-    const answer = chatResponse.choices?.[0].message?.content || '';
+    const answer = await llmStreamResponseToAnswerText(chatResponse);
 
     const qaArr = formatSplitText(answer, text); // 格式化后的QA对
 
@@ -140,7 +142,7 @@ ${replaceVariable(Prompt_AgentQA.fixedText, { text })}`;
       teamId: data.teamId,
       tmbId: data.tmbId,
       collectionId: data.collectionId,
-      trainingMode: TrainingModeEnum.chunk,
+      mode: TrainingModeEnum.chunk,
       data: qaArr.map((item) => ({
         ...item,
         chunkIndex: data.chunkIndex
@@ -168,12 +170,8 @@ ${replaceVariable(Prompt_AgentQA.fixedText, { text })}`;
     reduceQueue();
     generateQA();
   } catch (err: any) {
-    addLog.error(`[QA Queue] Error`);
+    addLog.error(`[QA Queue] Error`, err);
     reduceQueue();
-
-    if (await checkInvalidChunkAndLock({ err, data, errText: 'QA模型调用失败' })) {
-      return generateQA();
-    }
 
     setTimeout(() => {
       generateQA();
@@ -181,9 +179,7 @@ ${replaceVariable(Prompt_AgentQA.fixedText, { text })}`;
   }
 }
 
-/**
- * 检查文本是否按格式返回
- */
+// Format qa answer
 function formatSplitText(text: string, rawText: string) {
   text = text.replace(/\\n/g, '\n'); // 将换行符替换为空格
   const regex = /Q\d+:(\s*)(.*)(\s*)A\d+:(\s*)([\s\S]*?)(?=Q\d|$)/g; // 匹配Q和A的正则表达式
@@ -196,13 +192,7 @@ function formatSplitText(text: string, rawText: string) {
     if (q) {
       result.push({
         q,
-        a,
-        indexes: [
-          {
-            defaultIndex: true,
-            text: `${q}\n${a.trim().replace(/\n\s*/g, '\n')}`
-          }
-        ]
+        a
       });
     }
   }
@@ -213,13 +203,7 @@ function formatSplitText(text: string, rawText: string) {
     chunks.forEach((chunk) => {
       result.push({
         q: chunk,
-        a: '',
-        indexes: [
-          {
-            defaultIndex: true,
-            text: chunk
-          }
-        ]
+        a: ''
       });
     });
   }

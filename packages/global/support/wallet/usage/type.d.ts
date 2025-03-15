@@ -1,3 +1,4 @@
+import { SourceMemberType } from '../../../support/user/type';
 import { CreateUsageProps } from './api';
 import { UsageSourceEnum } from './constants';
 
@@ -6,10 +7,12 @@ export type UsageListItemCountType = {
   outputTokens?: number;
   charsLength?: number;
   duration?: number;
+  pages?: number;
 
   // deprecated
   tokens?: number;
 };
+
 export type UsageListItemType = UsageListItemCountType & {
   moduleName: string;
   amount: number;
@@ -28,4 +31,5 @@ export type UsageItemType = {
   source: UsageSchemaType['source'];
   totalPoints: number;
   list: UsageSchemaType['list'];
+  sourceMember: SourceMemberType;
 };
